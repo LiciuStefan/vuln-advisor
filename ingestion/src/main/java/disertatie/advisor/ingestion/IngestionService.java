@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class IngestionService {
@@ -25,7 +26,7 @@ public class IngestionService {
      * Pas 1: cloneaza repo → Pas 2: genereaza SBOM → Pas 3: parseaza componente.
      * Returneaza lista de componente cu adancimea si marcajul direct/tranzitiv.
      */
-    public IngestionOutput ingest(RepositoryRef ref, String analysisRunId) throws Exception {
+    public IngestionOutput ingest(RepositoryRef ref, UUID analysisRunId) throws Exception {
         Path proiectDir = cloner.clone(ref, analysisRunId);
         Path bomFile = sbomGenerator.generate(proiectDir);
         List<Component> components = sbomParser.parse(bomFile);

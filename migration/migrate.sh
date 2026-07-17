@@ -25,6 +25,6 @@ run_migration() {
 }
 
 run_migration advisor_ingestion     /flyway/sql/advisor_ingestion
-
+run_migration advisor_orchestrator /flyway/sql/advisor_orchestrator
 echo "──────────────────────────────────────────────"
 echo "Toate migrările au reușit."

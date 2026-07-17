@@ -1,12 +1,14 @@
 package disertatie.contracts.port;
 
+import java.util.UUID;
+
 /**
  * Publicat de orice worker după terminarea etapei. status ∈ {COMPLETED, FAILED}.
  */
 public record StageResult(
-        String analysisRunId,
+        UUID analysisRunId,
         String stage,
-        String status,
+        Status status,
         long durationMs,
         String error
 ) {}

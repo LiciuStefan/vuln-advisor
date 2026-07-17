@@ -20,6 +20,7 @@
         <module>app</module>
         <module>contracts</module>
         <module>ingestion</module>
+        <module>orchestrator</module>
     </modules>
 
     <properties>
@@ -52,6 +53,7 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
         </dependencies>
     </dependencyManagement>
 

@@ -1,6 +1,7 @@
 package disertatie.advisor.ingestion;
 
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import disertatie.contracts.port.Status;
 import disertatie.contracts.model.Component;
 import disertatie.contracts.model.Queues;
 import disertatie.contracts.model.RepositoryRef;
@@ -23,7 +24,7 @@ public class IngestionListener {
     private final IngestionService ingestionService;
     private final JdbcClient db;
     private final RabbitTemplate rabbitTemplate;
-    private final JsonMapper jsonMapper;
+    private final ObjectMapper objectMapper;
 
     @Value("${workspace.dir:/workspace}")
     private String workspaceDir;
@@ -31,11 +32,11 @@ public class IngestionListener {
     public IngestionListener(IngestionService ingestionService,
                              JdbcClient db,
                              RabbitTemplate rabbitTemplate,
-                             JsonMapper jsonMapper) {
+                             ObjectMapper objectMapper) {
         this.ingestionService = ingestionService;
         this.db = db;
         this.rabbitTemplate = rabbitTemplate;
-        this.jsonMapper = jsonMapper;
+        this.objectMapper = objectMapper;
     }
 
     @RabbitListener(queues = Queues.STAGE_INGESTION)
@@ -50,33 +51,32 @@ public class IngestionListener {
             writeComponentsToDB(task.analysisRunId(), output.components());
             writeToWorkspace(task.analysisRunId(), output.components());
 
-            publishResult(task, "COMPLETED", System.currentTimeMillis() - start, null);
+            publishResult(task, Status.COMPLETED, System.currentTimeMillis() - start, null);
         } catch (Exception e) {
-            publishResult(task, "FAILED", System.currentTimeMillis() - start, e.getMessage());
+            publishResult(task, Status.FAILED, System.currentTimeMillis() - start, e.getMessage());
         }
     }
 
-    private void writeComponentsToDB(String analysisRunId, List<Component> components) {
-        UUID runId = UUID.fromString(analysisRunId);
+    private void writeComponentsToDB(UUID analysisRunId, List<Component> components) {
         for (Component c : components) {
             db.sql("""
                     INSERT INTO component
                         (analysis_run_id, purl, group_id, artifact_id, version, direct, depth, path)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """)
-              .params(runId, c.purl(), c.group(), c.artifact(), c.version(),
+              .params(analysisRunId, c.purl(), c.group(), c.artifact(), c.version(),
                       c.direct(), c.depth(), c.path())
               .update();
         }
     }
 
-    private void writeToWorkspace(String analysisRunId, List<Component> components) throws Exception {
-        Path dir = Path.of(workspaceDir, analysisRunId);
+    private void writeToWorkspace(UUID analysisRunId, List<Component> components) throws Exception {
+        Path dir = Path.of(workspaceDir, String.valueOf(analysisRunId));
         Files.createDirectories(dir);
-        jsonMapper.writeValue(dir.resolve("components.json").toFile(), components);
+        objectMapper.writeValue(dir.resolve("components.json").toFile(), components);
     }
 
-    private void publishResult(StageTask task, String status, long durationMs, String error) {
+    private void publishResult(StageTask task, Status status, long durationMs, String error) {
         rabbitTemplate.convertAndSend(
                 Queues.STAGE_RESULTS,
                 new StageResult(task.analysisRunId(), task.stage(), status, durationMs, error)

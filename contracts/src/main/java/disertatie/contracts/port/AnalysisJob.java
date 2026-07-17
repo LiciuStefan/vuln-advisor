@@ -1,3 +1,5 @@
 package disertatie.contracts.port;
 
-public record AnalysisJob(String analysisRunId, String repoUrl, String commit) {}
+import java.util.UUID;
+
+public record AnalysisJob(UUID analysisRunId, String repoUrl, String commit) {}

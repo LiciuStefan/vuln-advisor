@@ -1,4 +1,4 @@
-package disertatie.advisor.ingestion;
+package disertatie.advisor;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -14,12 +14,27 @@ import org.springframework.context.annotation.Configuration;
 public class RabbitConfig {
 
     @Bean
-    public Queue ingestionQueue() {
+    public Queue jobsQueue() {
+        return QueueBuilder.durable(Queues.JOBS).build();
+    }
+
+    @Bean
+    public Queue stageIngestionQueue() {
         return QueueBuilder.durable(Queues.STAGE_INGESTION).build();
     }
 
     @Bean
-    public Queue resultsQueue() {
+    public Queue stageReachabilityQueue() {
+        return QueueBuilder.durable(Queues.STAGE_REACHABILITY).build();
+    }
+
+    @Bean
+    public Queue stageMatchingQueue() {
+        return QueueBuilder.durable(Queues.STAGE_MATCHING).build();
+    }
+
+    @Bean
+    public Queue stageResultsQueue() {
         return QueueBuilder.durable(Queues.STAGE_RESULTS).build();
     }
 

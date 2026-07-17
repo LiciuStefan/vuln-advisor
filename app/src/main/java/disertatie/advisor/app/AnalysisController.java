@@ -24,7 +24,7 @@ public class AnalysisController {
 
     @PostMapping
     public ResponseEntity<AnalysisResponse> startAnalysis(@RequestBody @Valid AnalysisRequest request) {
-        String analysisRunId = UUID.randomUUID().toString();
+        UUID analysisRunId = UUID.randomUUID();
         rabbitTemplate.convertAndSend(
                 Queues.JOBS,
                 new AnalysisJob(analysisRunId, request.repoUrl(), request.commit())

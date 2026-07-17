@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 
 @Component
 public class RepositoryCloner {
@@ -20,8 +21,8 @@ public class RepositoryCloner {
      * Daca un commit e specificat, face checkout pe el (clone complet).
      * Altfel, clone superficial (depth=1) pentru viteza.
      */
-    public Path clone(RepositoryRef ref, String analysisRunId) throws Exception {
-        Path targetDir = Path.of(workspaceDir, analysisRunId, "repo");
+    public Path clone(RepositoryRef ref, UUID analysisRunId) throws Exception {
+        Path targetDir = Path.of(workspaceDir, String.valueOf(analysisRunId), "repo");
         Files.createDirectories(targetDir);
 
         boolean specifiedCommit = ref.commit() != null && !ref.commit().isBlank();
