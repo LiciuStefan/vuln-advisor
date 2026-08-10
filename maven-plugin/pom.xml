@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>disertatie.advisor</groupId>
+        <artifactId>vuln-advisor-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>vuln-advisor-maven-plugin</artifactId>
+    <packaging>maven-plugin</packaging>
+    <name>Vulnerability Advisor : Maven Plugin</name>
+    <description>
+        Plugin Maven de sine stătător (goal `fix`, aggregator) care rulează în
+        reactor-ul proiectului analizat: colectează dependenţele nativ (fără
+        subprocese), corelează vulnerabilităţi (OSV/EPSS/KEV), calculează
+        reachability şi scor de risc, apoi remediază automat fixurile sigure
+        printr-un agent LLM. Fixurile tranzitive + major bump nu se aplică automat —
+        rămân propuneri în raport.
+    </description>
+
+    <properties>
+        <maven.core.version>3.9.9</maven.core.version>
+        <maven.plugin-tools.version>3.13.1</maven.plugin-tools.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>disertatie.advisor</groupId>
+            <artifactId>contracts</artifactId>
+            <version>0.1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>disertatie.advisor</groupId>
+            <artifactId>matching</artifactId>
+            <version>0.1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>disertatie.advisor</groupId>
+            <artifactId>reachability</artifactId>
+            <version>0.1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>disertatie.advisor</groupId>
+            <artifactId>prioritization</artifactId>
+            <version>0.1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>disertatie.advisor</groupId>
+            <artifactId>remediation</artifactId>
+            <version>0.1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-plugin-api</artifactId>
+            <version>${maven.core.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-core</artifactId>
+            <version>${maven.core.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-artifact</artifactId>
+            <version>${maven.core.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.plugin-tools</groupId>
+            <artifactId>maven-plugin-annotations</artifactId>
+            <version>${maven.plugin-tools.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Graf de dependenţe nativ Maven (DependencyGraphBuilder) -->
+        <dependency>
+            <groupId>org.apache.maven.shared</groupId>
+            <artifactId>maven-dependency-tree</artifactId>
+            <version>3.3.0</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-plugin-plugin</artifactId>
+                <version>${maven.plugin-tools.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

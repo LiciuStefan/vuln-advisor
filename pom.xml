@@ -11,49 +11,38 @@
 
     <name>Vulnerability Advisor</name>
     <description>
-        Sistem de analiză, prioritizare și remediere a vulnerabilităților
-        în dependențele aplicațiilor Spring Boot (Maven).
+        Plugin Maven de sine stătător pentru analiza, prioritizarea și remedierea
+        vulnerabilităților în dependențele proiectelor Maven.
         Lucrare de disertație — Master Inginerie Software.
     </description>
 
     <modules>
-        <module>app</module>
         <module>contracts</module>
-        <module>ingestion</module>
-        <module>orchestrator</module>
+        <module>matching</module>
+        <module>reachability</module>
+        <module>prioritization</module>
+        <module>remediation</module>
+        <module>maven-plugin</module>
     </modules>
 
     <properties>
-        <java.version>21</java.version>
-        <maven.compiler.release>21</maven.compiler.release>
+        <java.version>17</java.version>
+        <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <spring-boot.version>4.1.0</spring-boot.version>
-        <jackson.version>3.2.0</jackson.version>
+        <jackson.version>2.19.0</jackson.version>
         <junit.version>5.11.3</junit.version>
         <mockito.version>5.14.2</mockito.version>
         <assertj.version>3.26.3</assertj.version>
-        <testcontainers.version>1.20.4</testcontainers.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
             </dependency>
-
-            <dependency>
-                <groupId>org.testcontainers</groupId>
-                <artifactId>testcontainers-bom</artifactId>
-                <version>${testcontainers.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
         </dependencies>
     </dependencyManagement>
 
