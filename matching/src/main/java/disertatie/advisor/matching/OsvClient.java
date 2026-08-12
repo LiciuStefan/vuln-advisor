@@ -19,6 +19,10 @@ public class OsvClient {
     private static final String QUERYBATCH = "https://api.osv.dev/v1/querybatch";
     private static final String VULN_URL   = "https://api.osv.dev/v1/vulns/";
 
+    private static final Map<String, Double> QUALITATIVE_SEVERITY_UPPER_BOUND = Map.of(
+            "LOW", 3.9, "MODERATE", 6.9, "MEDIUM", 6.9, "HIGH", 8.9, "CRITICAL", 10.0
+    );
+
     private final HttpClient http;
     private final ObjectMapper mapper;
 
@@ -67,12 +71,15 @@ public class OsvClient {
             }
         }
 
-        // Pas 3: GET detalii pentru fiecare vuln OSV, extrage CVE
+        Set<String> presentGroupArtifacts = new HashSet<>();
+        for (Component c : components) {
+            presentGroupArtifacts.add(c.group() + ":" + c.artifact());
+        }
+
         List<Vulnerability> out = new ArrayList<>();
         for (String osvId : osvIds) {
             try {
-                Vulnerability v = fetchVuln(osvId);
-                if (v != null) out.add(v);
+                out.addAll(fetchVuln(osvId, presentGroupArtifacts));
             } catch (Exception e) {
 
             }
@@ -80,7 +87,7 @@ public class OsvClient {
         return out;
     }
 
-    private Vulnerability fetchVuln(String osvId) throws Exception {
+    private List<Vulnerability> fetchVuln(String osvId, Set<String> presentGroupArtifacts) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(VULN_URL + osvId))
                 .timeout(Duration.ofSeconds(15))
@@ -88,11 +95,13 @@ public class OsvClient {
                 .build();
 
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) return null;
+        if (resp.statusCode() != 200) return List.of();
 
-        JsonNode root = mapper.readTree(resp.body());
+        return parseVulnerabilities(mapper.readTree(resp.body()), presentGroupArtifacts);
+    }
 
-        // CVE din câmpul aliases
+    List<Vulnerability> parseVulnerabilities(JsonNode root, Set<String> presentGroupArtifacts) {
+        String osvId = root.path("id").asText();
         String cveId = null;
         for (JsonNode alias : root.path("aliases")) {
             String a = alias.asText();
@@ -100,7 +109,6 @@ public class OsvClient {
         }
         if (cveId == null) cveId = osvId;
 
-        // Vector CVSS şi scor
         String cvssVector = null;
         double cvssScore = 0.0;
         for (JsonNode sev : root.path("severity")) {
@@ -110,38 +118,58 @@ public class OsvClient {
                 break;
             }
         }
+        if (cvssVector == null) {
+            // Fallback CVSS v4.0: fără formula exactă
+            for (JsonNode sev : root.path("severity")) {
+                if ("CVSS_V4".equals(sev.path("type").asText())) {
+                    cvssVector = sev.path("score").asText(null);
+                    break;
+                }
+            }
+            if (cvssVector != null) {
+                String qualitative = root.path("database_specific").path("severity").asText("").toUpperCase();
+                cvssScore = QUALITATIVE_SEVERITY_UPPER_BOUND.getOrDefault(qualitative, 0.0);
+            }
+        }
 
-        // Purl afectat şi interval de versiuni
-        String affectedPurl = null;
-        String affectedRange = null;
-        String fixedVersion = null;
-
+        Vulnerability fallback = null;
         for (JsonNode aff : root.path("affected")) {
             JsonNode pkg = aff.path("package");
             String purl = resolveAffectedPurl(pkg);
             if (purl == null) continue;
 
-            affectedPurl = purl;
-            JsonNode ranges = aff.path("ranges");
-            if (ranges.isArray() && !ranges.isEmpty()) {
-                JsonNode range = ranges.get(0);
-                StringBuilder sb = new StringBuilder();
-                for (JsonNode ev : range.path("events")) {
-                    if (ev.has("introduced")) sb.append(">=").append(ev.get("introduced").asText()).append(" ");
-                    if (ev.has("fixed")) {
-                        String fixed = ev.get("fixed").asText();
-                        sb.append("<").append(fixed).append(" ");
-                        if (fixedVersion == null) fixedVersion = fixed;
-                    }
-                }
-                affectedRange = sb.toString().trim();
+            String[] rangeAndFixed = extractRangeAndFixedVersion(aff);
+            Vulnerability candidate = new Vulnerability(cveId, purl, rangeAndFixed[0], rangeAndFixed[1], cvssScore, cvssVector);
+
+            if (fallback == null) fallback = candidate;
+
+            String groupArtifact = groupArtifactFromPurl(purl);
+            if (groupArtifact != null && presentGroupArtifacts.contains(groupArtifact)) {
+                return List.of(candidate);
             }
-            break;
         }
 
-        if (affectedPurl == null) return null;
+        return fallback != null ? List.of(fallback) : List.of();
+    }
 
-        return new Vulnerability(cveId, affectedPurl, affectedRange, fixedVersion, cvssScore, cvssVector);
+    private String[] extractRangeAndFixedVersion(JsonNode aff) {
+        String affectedRange = null;
+        String fixedVersion = null;
+        JsonNode ranges = aff.path("ranges");
+        if (ranges.isArray() && !ranges.isEmpty()) {
+            JsonNode range = ranges.get(0);
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode ev : range.path("events")) {
+                if (ev.has("introduced")) sb.append(">=").append(ev.get("introduced").asText()).append(" ");
+                if (ev.has("fixed")) {
+                    String fixed = ev.get("fixed").asText();
+                    sb.append("<").append(fixed).append(" ");
+                    if (fixedVersion == null) fixedVersion = fixed;
+                }
+            }
+            affectedRange = sb.toString().trim();
+        }
+        return new String[]{ affectedRange, fixedVersion };
     }
 
     String resolveAffectedPurl(JsonNode pkg) {
@@ -154,5 +182,16 @@ public class OsvClient {
         int colon = name.indexOf(':');
         if (colon <= 0 || colon == name.length() - 1) return null;
         return "pkg:maven/" + name.substring(0, colon) + "/" + name.substring(colon + 1);
+    }
+
+    /* Extrage "groupId:artifactId" dintr-un purl "pkg:maven/<group>/<artifact>[@<version>]". */
+    private String groupArtifactFromPurl(String purl) {
+        if (purl == null || !purl.startsWith("pkg:maven/")) return null;
+        String rest = purl.substring("pkg:maven/".length());
+        int at = rest.indexOf('@');
+        if (at >= 0) rest = rest.substring(0, at);
+        int slash = rest.indexOf('/');
+        if (slash <= 0 || slash == rest.length() - 1) return null;
+        return rest.substring(0, slash) + ":" + rest.substring(slash + 1);
     }
 }
