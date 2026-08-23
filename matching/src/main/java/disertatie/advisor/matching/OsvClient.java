@@ -71,15 +71,20 @@ public class OsvClient {
             }
         }
 
-        Set<String> presentGroupArtifacts = new HashSet<>();
+        Map<String, String> currentVersionByGroupArtifact = new HashMap<>();
         for (Component c : components) {
-            presentGroupArtifacts.add(c.group() + ":" + c.artifact());
+            if (c.version() == null || c.version().isBlank()) continue;
+            String groupArtifact = c.group() + ":" + c.artifact();
+            String existing = currentVersionByGroupArtifact.get(groupArtifact);
+            if (existing == null || compareVersions(c.version(), existing) > 0) {
+                currentVersionByGroupArtifact.put(groupArtifact, c.version());
+            }
         }
 
         List<Vulnerability> out = new ArrayList<>();
         for (String osvId : osvIds) {
             try {
-                out.addAll(fetchVuln(osvId, presentGroupArtifacts));
+                out.addAll(fetchVuln(osvId, currentVersionByGroupArtifact));
             } catch (Exception e) {
 
             }
@@ -87,7 +92,7 @@ public class OsvClient {
         return out;
     }
 
-    private List<Vulnerability> fetchVuln(String osvId, Set<String> presentGroupArtifacts) throws Exception {
+    private List<Vulnerability> fetchVuln(String osvId, Map<String, String> currentVersionByGroupArtifact) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(VULN_URL + osvId))
                 .timeout(Duration.ofSeconds(15))
@@ -97,10 +102,10 @@ public class OsvClient {
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() != 200) return List.of();
 
-        return parseVulnerabilities(mapper.readTree(resp.body()), presentGroupArtifacts);
+        return parseVulnerabilities(mapper.readTree(resp.body()), currentVersionByGroupArtifact);
     }
 
-    List<Vulnerability> parseVulnerabilities(JsonNode root, Set<String> presentGroupArtifacts) {
+    List<Vulnerability> parseVulnerabilities(JsonNode root, Map<String, String> currentVersionByGroupArtifact) {
         String osvId = root.path("id").asText();
         String cveId = null;
         for (JsonNode alias : root.path("aliases")) {
@@ -132,44 +137,118 @@ public class OsvClient {
             }
         }
 
+        // Acelaşi advisory poate descrie mai multe branch-uri de release, fie ca blocuri
+        // `affected` separate pentru acelaşi pachet, fie ca intervale multiple în acelaşi
+        // bloc. Preferăm blocul al cărui interval CONŢINE versiunea curentă a componentei;
+        // dacă niciunul nu o conţine, reţinem primul bloc cu GroupArtifact prezent, apoi primul bloc oarecare.
         Vulnerability fallback = null;
+        Vulnerability groupArtifactMatch = null;
         for (JsonNode aff : root.path("affected")) {
             JsonNode pkg = aff.path("package");
             String purl = resolveAffectedPurl(pkg);
             if (purl == null) continue;
 
-            String[] rangeAndFixed = extractRangeAndFixedVersion(aff);
-            Vulnerability candidate = new Vulnerability(cveId, purl, rangeAndFixed[0], rangeAndFixed[1], cvssScore, cvssVector);
-
-            if (fallback == null) fallback = candidate;
-
             String groupArtifact = groupArtifactFromPurl(purl);
-            if (groupArtifact != null && presentGroupArtifacts.contains(groupArtifact)) {
+            boolean present = groupArtifact != null && currentVersionByGroupArtifact.containsKey(groupArtifact);
+            String currentVersion = present ? currentVersionByGroupArtifact.get(groupArtifact) : null;
+
+            RangeSelection selection = selectRange(aff, currentVersion);
+            Vulnerability candidate = new Vulnerability(cveId, purl, selection.affectedRange(),
+                    selection.fixedVersion(), cvssScore, cvssVector);
+
+            if (present && selection.containsCurrent()) {
                 return List.of(candidate);
             }
+            if (present && groupArtifactMatch == null) groupArtifactMatch = candidate;
+            if (fallback == null) fallback = candidate;
         }
 
+        if (groupArtifactMatch != null) return List.of(groupArtifactMatch);
         return fallback != null ? List.of(fallback) : List.of();
     }
 
-    private String[] extractRangeAndFixedVersion(JsonNode aff) {
-        String affectedRange = null;
-        String fixedVersion = null;
-        JsonNode ranges = aff.path("ranges");
-        if (ranges.isArray() && !ranges.isEmpty()) {
-            JsonNode range = ranges.get(0);
-            StringBuilder sb = new StringBuilder();
+    /* Un segment afectat [introduced, fixed) — `fixed` null înseamnă branch încă nefixat. */
+    private record Segment(String introduced, String fixed) {}
+
+    private record RangeSelection(String affectedRange, String fixedVersion, boolean containsCurrent) {}
+
+    private RangeSelection selectRange(JsonNode aff, String currentVersion) {
+        List<Segment> segments = new ArrayList<>();
+        for (JsonNode range : aff.path("ranges")) {
+            if ("GIT".equalsIgnoreCase(range.path("type").asText(""))) continue;
+            String introduced = null;
             for (JsonNode ev : range.path("events")) {
-                if (ev.has("introduced")) sb.append(">=").append(ev.get("introduced").asText()).append(" ");
+                if (ev.has("introduced")) {
+                    if (introduced != null) segments.add(new Segment(introduced, null));
+                    introduced = ev.get("introduced").asText();
+                }
                 if (ev.has("fixed")) {
-                    String fixed = ev.get("fixed").asText();
-                    sb.append("<").append(fixed).append(" ");
-                    if (fixedVersion == null) fixedVersion = fixed;
+                    segments.add(new Segment(introduced, ev.get("fixed").asText()));
+                    introduced = null;
                 }
             }
-            affectedRange = sb.toString().trim();
+            if (introduced != null) segments.add(new Segment(introduced, null));
         }
-        return new String[]{ affectedRange, fixedVersion };
+        if (segments.isEmpty()) return new RangeSelection(null, null, false);
+
+        StringBuilder sb = new StringBuilder();
+        for (Segment s : segments) {
+            if (s.introduced() != null) sb.append(">=").append(s.introduced()).append(" ");
+            if (s.fixed() != null) sb.append("<").append(s.fixed()).append(" ");
+        }
+
+        Segment selected = null;
+        if (currentVersion != null && !currentVersion.isBlank()) {
+            for (Segment s : segments) {
+                if (segmentContains(s, currentVersion)) { selected = s; break; }
+            }
+        }
+
+        String fixedVersion;
+        if (selected != null) {
+            // fixed null aici = versiunea curentă e pe un branch încă nefixat
+            fixedVersion = selected.fixed();
+        } else {
+            fixedVersion = segments.stream().map(Segment::fixed).filter(Objects::nonNull).findFirst().orElse(null);
+        }
+        if (fixedVersion != null && currentVersion != null && !currentVersion.isBlank()
+                && compareVersions(fixedVersion, currentVersion) < 0) {
+            fixedVersion = null;
+        }
+        return new RangeSelection(sb.toString().trim(), fixedVersion, selected != null);
+    }
+
+    private boolean segmentContains(Segment s, String version) {
+        boolean aboveIntroduced = s.introduced() == null || compareVersions(version, s.introduced()) >= 0;
+        boolean belowFixed = s.fixed() == null || compareVersions(version, s.fixed()) < 0;
+        return aboveIntroduced && belowFixed;
+    }
+
+    static int compareVersions(String a, String b) {
+        int[] ta = numericTuple(a);
+        int[] tb = numericTuple(b);
+        int len = Math.max(ta.length, tb.length);
+        for (int i = 0; i < len; i++) {
+            int va = i < ta.length ? ta[i] : 0;
+            int vb = i < tb.length ? tb[i] : 0;
+            if (va != vb) return Integer.compare(va, vb);
+        }
+        return 0;
+    }
+
+    private static int[] numericTuple(String version) {
+        String[] parts = version.split("[.\\-]");
+        int count = 0;
+        int[] nums = new int[parts.length];
+        for (String part : parts) {
+            try {
+                nums[count] = Integer.parseInt(part);
+                count++;
+            } catch (NumberFormatException e) {
+                break;
+            }
+        }
+        return Arrays.copyOf(nums, count);
     }
 
     String resolveAffectedPurl(JsonNode pkg) {
